@@ -6,12 +6,14 @@ var readline = require("readline");
 var path = require("path");
 var url = require("url");
 var child_process = require("child_process");
+var Canvas = require("canvas");
 var cb = require("./sync.js");
 var db = require("./db.js");
 var async = require("async");
 
 var tables = new db.TableArray();
 tables.push(new db.Table("table1.json"));
+var domains = ["gender.ml", "www.gender.ml"];
 
 var r1 = readline.createInterface({input: process.stdin, output: process.stdout});
 r1.setPrompt("");
@@ -21,7 +23,7 @@ r1.on("line", data => {
 			console.dir(eval(data));
 		}
 		catch(err){
-			console.log(err);
+			console.error(err);
 		}
 	}
 });
@@ -51,23 +53,20 @@ function onRequest(request, response){
 		function parseN(file, head){
 			function subParseN(){
 				var body = "";
-				async.concatSeries(file.split(/<script (%>(?:.|\n)*?)<\/script>/), (chunk, callback) => {
-					if(chunk.startsWith("%>")){
-						try {
-							eval("(async function(){"+chunk.substr(2)+"\ncallback();})();");
-						}
-						catch(err){
-							console.log(err);
-							callback();
-						}
-					}
+				var _asyncFunction = "";
+				var _parts = file.split(/<script (%>(?:.|\n)*?)<\/script>/);
+				for(var i = 0; i < _parts.length; i++){
+					if(_parts[i].startsWith("%>")) _asyncFunction += _parts[i].substr(2);
 					else {
-						body += chunk;
-						callback();
+						_asyncFunction += ` body += _parts[${i}]; `;
+						_asyncFunction += "\n".repeat((_parts[i].match(/\n/g) || []).length);
 					}
-				}, (err, data) => {
-					if(err) console.log(err);
-					response.writeHead(head);
+				}
+				eval(`(async function(){${_asyncFunction}})();`).then(data => {
+					if(request.method == "POST" && !request.takeOverFiles){
+						for(let i in request.files) if(request.files[i].name == "" && request.files[i].size == 0) fs.unlink(request.files[i].path, () => {});
+					}
+					response.writeHead(response.takeOverResponseCode || head);
 					response.end(body);
 				});
 			}
@@ -84,10 +83,9 @@ function onRequest(request, response){
 				request.form.parse(request, (err, fields, files) => {
 					console.dir(fields);
 					console.dir(files);
+					request.files = files;
+					request.fields = fields;
 					subParseN();
-					if(!request.takeOverFiles){
-						for(let i in files) if(files[i].name == "" && files[i].size == 0) fs.unlink(files[i].path, () => {});
-					}
 				});
 			}
 			else subParseN();
@@ -97,6 +95,7 @@ function onRequest(request, response){
 		else response.setHeader("Access-Control-Allow-Origin", "http://gender.ml");
 		//response.setHeader("X-Frame-Options", "SAMEORIGIN");
 		response.setHeader("Content-Type", "text/html; charset=utf-8");
+		response.setHeader("Server", "NS meme server 0.1.0");
 
 		fs.stat(request.urlLocal, (err, stats) => {
 			if(err){
@@ -144,7 +143,7 @@ function onRequest(request, response){
 				else if(stats.isFile()){
 					if(/^index.(?:html|htm)$/.test(request.urlEsc.split("/").reverse()[0])){
 						response.writeHead(403);
-						response.end("403 - forbidden<br>\nindex pages can't be accessed as files");
+						response.end("403 - forbidden<br>\nindex pages must be accessed as directories");
 					}
 					else if(getExt(request.urlEsc) == "htm"){
 						parseN(fs.readFileSync(request.urlLocal, "utf8"), 200);
@@ -190,15 +189,24 @@ function onRequest(request, response){
 		});
 	}
 
+	request.ip = request.connection.remoteAddress.split(":").reverse()[0];
 	request.https = false;
-	if(request.socket.encrypted) request.http = true;
-	request.urlNoQs = decodeURI(request.url.split("?")[0]);
-	request.urlEsc = "/"+request.urlNoQs.split("/").filter(e => e !== "" && e !== "." && e !== "..").join("/");
-	if(request.urlNoQs.endsWith("/") && request.urlNoQs != "/") request.urlEsc += "/";
-	if(request.urlEsc == "//")  request.urlEsc = "/";
-	request.urlLocal = webRoot+request.urlEsc;
+	if(request.connection.encrypted) request.https = true;
 
-	responseLogic();
+	if((request.method == "GET" || request.method == "POST") && domains.indexOf(request.headers.host) > -1){
+		let urlprop = url.parse(request.url, true);
+		request.qs = urlprop.query;
+		request.urlNoQs = decodeURI(urlprop.pathname);
+		request.urlEsc = "/"+request.urlNoQs.split("/").filter(e => e !== "" && e !== "." && e !== "..").join("/");
+		if(request.urlNoQs.endsWith("/") && request.urlNoQs != "/") request.urlEsc += "/";
+		if(request.urlEsc == "//")  request.urlEsc = "/";
+		request.urlLocal = webRoot+request.urlEsc;
+		if(request.headers.range === undefined){
+			console.log("\033[34m"+request.ip+"\033[0m "+(request.https ? "\033[32m[S]\033[0m " : "")+request.method+" "+request.url);
+			for(e in request.headers) console.log(` | ${e}: ${request.headers[e]}`);
+		}
+		responseLogic();
+	}
 }
 
 httpsServer.listen(443);
