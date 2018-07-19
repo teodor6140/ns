@@ -1,3 +1,4 @@
+"use strict";
 var http = require("http");
 var https = require("https");
 var formidable = require("formidable");
@@ -5,11 +6,13 @@ var fs = require("fs");
 var readline = require("readline");
 var path = require("path");
 var url = require("url");
+var qs = require("querystring");
 var child_process = require("child_process");
 var Canvas = require("canvas");
 var cb = require("./sync.js");
 var db = require("./db.js");
 var async = require("async");
+var gs = require("./gscrape.js");
 
 var tables = new db.TableArray();
 tables.push(new db.Table("table1.json"));
@@ -33,8 +36,9 @@ var webRoot = "/home/teodor/nroot/";
 var mimeTypes = fs.readFileSync("mime.types", "utf8").split("\n").map(e => e.split(" "));
 function getMime(mime){
 	for(var i = 0; i < mimeTypes.length; i++) if(mimeTypes[i].indexOf(mime) > 0) return mimeTypes[i][0];
+	return false;
 }
-function getExt(filename){
+function getExt(filename = ""){
 	var base = filename.split("/").filter(e => e != "").reverse();
 	if(base.length == 0) return false;
 	var ext = base[0].split(".").filter(e => e != "").reverse();
@@ -68,7 +72,7 @@ function onRequest(request, response){
 					}
 					response.writeHead(response.takeOverResponseCode || head);
 					response.end(body);
-				});
+				}).catch(err => console.error(err));
 			}
 
 			if(request.method == "POST"){
@@ -202,8 +206,8 @@ function onRequest(request, response){
 		if(request.urlEsc == "//")  request.urlEsc = "/";
 		request.urlLocal = webRoot+request.urlEsc;
 		if(request.headers.range === undefined){
-			console.log("\033[34m"+request.ip+"\033[0m "+(request.https ? "\033[32m[S]\033[0m " : "")+request.method+" "+request.url);
-			for(e in request.headers) console.log(` | ${e}: ${request.headers[e]}`);
+			console.log("\x1b[34m"+request.ip+"\x1b[0m "+(request.https ? "\x1b[32m[S]\x1b[0m " : "")+request.method+" "+request.url);
+			for(var e in request.headers) console.log(` | ${e}: ${request.headers[e]}`);
 		}
 		responseLogic();
 	}
